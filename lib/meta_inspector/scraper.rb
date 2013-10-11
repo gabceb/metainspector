@@ -23,10 +23,8 @@ module MetaInspector
     def initialize(url, options = {})
       options   = defaults.merge(options)
 
-      @url      = with_default_scheme(normalize_url(url))
-      @scheme   = URI.parse(@url).scheme
-      @host     = URI.parse(@url).host
-      @root_url = "#{@scheme}://#{@host}/"
+      update_url_and_invalidate_url_components( with_default_scheme(normalize_url(url)) )
+      
       @timeout  = options[:timeout]
       @data     = Hashie::Rash.new
       @errors   = []
@@ -34,6 +32,18 @@ module MetaInspector
       @allow_redirections = options[:allow_redirections]
       @verbose            = options[:verbose]
       @document           = options[:document]
+    end
+
+    def scheme
+      @scheme ||= URI.parse(@url).scheme
+    end
+
+    def root_url
+      @root_url ||= "#{scheme}://#{host}/"
+    end
+
+    def host
+      @host ||= URI.parse(@url).host
     end
 
     # Returns the parsed document title, from the content of the <title> tag.
@@ -142,6 +152,14 @@ module MetaInspector
       }
     end
 
+    # Updates the url and invalidates all url related components
+    def update_url_and_invalidate_url_components(url)
+      @url = url
+      
+      # Invalidate the cached url components now that we have a new url
+      @scheme, @host, @root_url = nil
+    end
+
     # Scrapers for all meta_tags in the form of "meta_name" are automatically defined. This has been tested for
     # meta name: keywords, description, robots, generator
     # meta http-equiv: content-language, Content-Type
@@ -166,7 +184,7 @@ module MetaInspector
 
     # Makes the request to the server
     def request
-      Timeout::timeout(timeout) { @request ||= open(url, {:allow_redirections => allow_redirections}) }
+      Timeout::timeout(timeout) { @request ||=  open_and_update_url(url)}
 
       rescue TimeoutError
         add_fatal_error 'Timeout!!!'
@@ -174,6 +192,18 @@ module MetaInspector
         add_fatal_error 'Socket error: The url provided does not exist or is temporarily unavailable'
       rescue Exception => e
         add_fatal_error "Scraping exception: #{e.message}"
+    end
+
+
+    def open_and_update_url(url)
+      request = open(url, {:allow_redirections => allow_redirections})
+
+      request_base_uri = request.base_uri.to_s
+
+      # Update the url attributes if a new url is available
+      update_url_and_invalidate_url_components(request_base_uri) unless request_base_uri == url.to_s
+      
+      return request
     end
 
     # Scrapes all meta tags found
